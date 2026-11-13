@@ -53,6 +53,7 @@ class Ledger:
         self._seen_references: dict[str, tuple[str, str, Decimal]] = {}
 
     def open(self, number: str, owner: str, currency: str = "INR") -> Account:
+        number, owner, currency = (" ".join(str(s).split()) for s in (number, owner, currency))
         if number in self.accounts:
             raise DuplicateAccount(number)
         acct = Account(number, owner, currency)
