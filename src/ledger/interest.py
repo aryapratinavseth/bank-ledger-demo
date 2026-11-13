@@ -5,10 +5,13 @@ rounded to the cent, half up.
 """
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
+
+CENT = Decimal("0.01")
 
 
 def monthly_interest(balance: Decimal, annual_rate_pct: float, days: int) -> Decimal:
     """Interest for `days` days at `annual_rate_pct` percent a year on `balance`."""
-    interest = float(balance) * annual_rate_pct / 100 * days / 365
-    return Decimal(str(round(interest, 2)))
+    rate = Decimal(str(annual_rate_pct)) / Decimal(100)
+    interest = balance * rate * Decimal(days) / Decimal(365)
+    return interest.quantize(CENT, rounding=ROUND_HALF_UP)
