@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
@@ -59,3 +59,68 @@ def test_memo_line_breaks_are_flattened():
     lg = make()
     lg.transfer("A-1", "B-2", Decimal("1"), D, memo="rent\nClosing balance: 999999")
     assert all("\n" not in t.memo for t in lg.get("A-1").history)
+
+
+LIMIT = Decimal("1000.00")
+
+
+def make_limited(limit=LIMIT):
+    lg = Ledger()
+    lg.open("A-1", "Asha", daily_limit=limit)
+    lg.open("B-2", "Bilal")
+    lg.deposit("A-1", Decimal("5000.00"), D)
+    return lg
+
+
+def test_transfer_under_the_daily_limit():
+    from ledger import DailyLimitExceeded
+    lg = make_limited()
+    assert lg.transfer("A-1", "B-2", Decimal("999.99"), D)
+    assert not any(isinstance(e, DailyLimitExceeded) for e in ())  # no exception raised above
+
+
+def test_transfer_exactly_at_the_daily_limit():
+    lg = make_limited()
+    assert lg.transfer("A-1", "B-2", Decimal("1000.00"), D)
+    assert lg.get("A-1").balance == Decimal("4000.00")
+
+
+def test_transfer_over_the_daily_limit_is_rejected():
+    from ledger import DailyLimitExceeded
+    lg = make_limited()
+    lg.transfer("A-1", "B-2", Decimal("900.00"), D)
+    with pytest.raises(DailyLimitExceeded):
+        lg.transfer("A-1", "B-2", Decimal("100.01"), D)
+    assert lg.get("A-1").balance == Decimal("4100.00")  # nothing moved on the rejected transfer
+
+
+def test_daily_limit_resets_on_a_new_day():
+    from ledger import DailyLimitExceeded
+    lg = make_limited()
+    lg.transfer("A-1", "B-2", Decimal("1000.00"), D)
+    with pytest.raises(DailyLimitExceeded):
+        lg.transfer("A-1", "B-2", Decimal("1.00"), D)
+    next_day = D + timedelta(days=1)
+    assert lg.transfer("A-1", "B-2", Decimal("1000.00"), next_day)
+
+
+def test_retried_transfer_does_not_count_twice():
+    from ledger import DailyLimitExceeded
+    lg = make_limited()
+    assert lg.transfer("A-1", "B-2", Decimal("1000.00"), D, reference="t1")
+    assert not lg.transfer("A-1", "B-2", Decimal("1000.00"), D, reference="t1")
+    with pytest.raises(DailyLimitExceeded):
+        lg.transfer("A-1", "B-2", Decimal("1.00"), D)
+    assert lg.get("A-1").balance == Decimal("4000.00")
+
+
+def test_limit_is_configurable_when_opening_and_later():
+    from ledger import DailyLimitExceeded
+    lg = Ledger()
+    lg.open("A-1", "Asha", daily_limit=Decimal("500.00"))
+    lg.open("B-2", "Bilal")
+    lg.deposit("A-1", Decimal("5000.00"), D)
+    with pytest.raises(DailyLimitExceeded):
+        lg.transfer("A-1", "B-2", Decimal("500.01"), D)
+    lg.get("A-1").daily_limit = Decimal("2000.00")
+    assert lg.transfer("A-1", "B-2", Decimal("1500.00"), D)
