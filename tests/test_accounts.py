@@ -4,6 +4,7 @@ from decimal import Decimal
 import pytest
 
 from ledger import InsufficientFunds, Ledger, UnknownAccount
+from ledger.money import Money
 
 D = date(2026, 11, 2)
 
@@ -19,15 +20,15 @@ def make():
 def test_deposit_and_transfer():
     lg = make()
     assert lg.transfer("A-1", "B-2", Decimal("250.50"), D, reference="t1")
-    assert lg.get("A-1").balance == Decimal("749.50")
-    assert lg.get("B-2").balance == Decimal("250.50")
+    assert lg.get("A-1").balance == Money(Decimal("749.50"), "INR")
+    assert lg.get("B-2").balance == Money(Decimal("250.50"), "INR")
 
 
 def test_transfer_is_idempotent_by_reference():
     lg = make()
     assert lg.transfer("A-1", "B-2", Decimal("100"), D, reference="t1")
     assert not lg.transfer("A-1", "B-2", Decimal("100"), D, reference="t1")
-    assert lg.get("A-1").balance == Decimal("900.00")
+    assert lg.get("A-1").balance == Money(Decimal("900.00"), "INR")
 
 
 def test_insufficient_funds():

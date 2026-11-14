@@ -90,6 +90,9 @@ class Money:
     def __str__(self) -> str:
         return str(self.amount)
 
+    def __format__(self, spec: str) -> str:
+        return format(self.amount, spec)
+
     def __repr__(self) -> str:
         return f"Money({self.amount!r}, {self.currency!r})"
 

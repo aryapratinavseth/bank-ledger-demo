@@ -1,11 +1,11 @@
-"""Accounts and transfers. Money is held as Decimal, two places, in the account's currency."""
+"""Accounts and transfers. Money is held as Money (Decimal, two places) in the account's currency."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 
-CENT = Decimal("0.01")
+from .money import CurrencyMismatch, Money, as_money
 
 
 class UnknownAccount(KeyError):
@@ -27,7 +27,7 @@ class ReferenceConflict(ValueError):
 @dataclass
 class Transaction:
     day: date
-    amount: Decimal          # positive = credit, negative = debit
+    amount: Money          # positive = credit, negative = debit
     memo: str
     reference: str | None = None
 
@@ -37,11 +37,16 @@ class Account:
     number: str
     owner: str
     currency: str = "INR"
-    balance: Decimal = Decimal("0.00")
+    balance: Money = field(default_factory=lambda: Money(Decimal("0.00"), "INR"))
     history: list[Transaction] = field(default_factory=list)
 
-    def post(self, day: date, amount: Decimal, memo: str, reference: str | None = None) -> None:
-        amount = Decimal(amount).quantize(CENT)
+    def __post_init__(self) -> None:
+        # A fresh account always starts at zero in its own currency.
+        self.balance = Money(Decimal("0.00"), self.currency)
+
+    def post(self, day: date, amount: Money, memo: str, reference: str | None = None) -> None:
+        if amount.currency != self.currency:
+            raise CurrencyMismatch(f"cannot post {amount.currency} to a {self.currency} account")
         memo = " ".join(memo.split())  # no line breaks or control whitespace in statements
         self.balance += amount
         self.history.append(Transaction(day, amount, memo, reference))
@@ -50,7 +55,7 @@ class Account:
 class Ledger:
     def __init__(self) -> None:
         self.accounts: dict[str, Account] = {}
-        self._seen_references: dict[str, tuple[str, str, Decimal]] = {}
+        self._seen_references: dict[str, tuple[str, str, Money]] = {}
 
     def open(self, number: str, owner: str, currency: str = "INR") -> Account:
         number, owner, currency = (" ".join(str(s).split()) for s in (number, owner, currency))
@@ -66,12 +71,14 @@ class Ledger:
         except KeyError:
             raise UnknownAccount(number) from None
 
-    def deposit(self, number: str, amount: Decimal, day: date, memo: str = "deposit") -> None:
-        if Decimal(amount) <= 0:
+    def deposit(self, number: str, amount: Money | Decimal, day: date, memo: str = "deposit") -> None:
+        acct = self.get(number)
+        money = as_money(amount, acct.currency)
+        if money <= Money(Decimal("0.00"), acct.currency):
             raise ValueError("deposit must be positive")
-        self.get(number).post(day, Decimal(amount), memo)
+        acct.post(day, money, memo)
 
-    def transfer(self, src: str, dst: str, amount: Decimal, day: date,
+    def transfer(self, src: str, dst: str, amount: Money | Decimal, day: date,
                  reference: str | None = None, memo: str = "transfer") -> bool:
         """Move money between two accounts in the same currency.
 
@@ -79,20 +86,20 @@ class Ledger:
         amount is ignored and returns False (idempotent retries); the same reference with different
         details raises ReferenceConflict. Returns True when money moved.
         """
-        amount = Decimal(amount).quantize(CENT)
-        if amount <= 0:
-            raise ValueError("transfer must be positive")
-        if reference is not None and reference in self._seen_references:
-            if self._seen_references[reference] != (src, dst, amount):
-                raise ReferenceConflict(reference)
-            return False
         a, b = self.get(src), self.get(dst)
         if a.currency != b.currency:
             raise ValueError("cross-currency transfers are not supported")
-        if a.balance < amount:
-            raise InsufficientFunds(f"{src} has {a.balance}, needs {amount}")
-        a.post(day, -amount, f"{memo} to {dst}", reference)
-        b.post(day, amount, f"{memo} from {src}", reference)
+        money = as_money(amount, a.currency)
+        if money <= Money(Decimal("0.00"), a.currency):
+            raise ValueError("transfer must be positive")
+        if reference is not None and reference in self._seen_references:
+            if self._seen_references[reference] != (src, dst, money):
+                raise ReferenceConflict(reference)
+            return False
+        if a.balance < money:
+            raise InsufficientFunds(f"{src} has {a.balance}, needs {money}")
+        a.post(day, -money, f"{memo} to {dst}", reference)
+        b.post(day, money, f"{memo} from {src}", reference)
         if reference is not None:
-            self._seen_references[reference] = (src, dst, amount)
+            self._seen_references[reference] = (src, dst, money)
         return True
