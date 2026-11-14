@@ -7,8 +7,10 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+from .money import Money
 
-def monthly_interest(balance: Decimal, annual_rate_pct: float, days: int) -> Decimal:
+
+def monthly_interest(balance: Money, annual_rate_pct: float, days: int) -> Money:
     """Interest for `days` days at `annual_rate_pct` percent a year on `balance`."""
-    interest = float(balance) * annual_rate_pct / 100 * days / 365
-    return Decimal(str(round(interest, 2)))
+    interest = balance.amount * Decimal(str(annual_rate_pct)) / Decimal(100) * days / Decimal(365)
+    return Money(interest, balance.currency)

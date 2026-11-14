@@ -6,7 +6,12 @@
 """
 from __future__ import annotations
 
+import re
 from decimal import Decimal
+
+from .money import Money
+
+_FLOAT_LITERALS = re.compile(r"(?<![\w.])\d+\.\d+")
 
 
 class FeeSchedule:
@@ -18,9 +23,11 @@ class FeeSchedule:
             kind, expr = line.split(":", 1)
             self.rules[kind.strip()] = expr.strip()
 
-    def fee(self, kind: str, amount: Decimal) -> Decimal:
+    def fee(self, kind: str, amount: Money) -> Money:
         expr = self.rules.get(kind)
         if expr is None:
-            return Decimal("0.00")
-        value = eval(expr, {"max": max, "min": min}, {"amount": float(amount)})
-        return Decimal(str(value)).quantize(Decimal("0.01"))
+            return Money(Decimal("0.00"), amount.currency)
+        # Rewrite float literals to Decimal so the arithmetic stays in Decimal, never float.
+        expr = _FLOAT_LITERALS.sub(lambda m: f"Decimal({m.group(0)})", expr)
+        value = eval(expr, {"max": max, "min": min, "Decimal": Decimal}, {"amount": amount.amount})
+        return Money(Decimal(str(value)), amount.currency)
