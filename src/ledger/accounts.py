@@ -6,6 +6,7 @@ from datetime import date
 from decimal import Decimal
 
 CENT = Decimal("0.01")
+DEFAULT_DAILY_LIMIT = Decimal("100000.00")
 
 
 class UnknownAccount(KeyError):
@@ -24,6 +25,10 @@ class ReferenceConflict(ValueError):
     """A transfer reference was reused with different details."""
 
 
+class DailyLimitExceeded(ValueError):
+    """A transfer would take the account's day's outgoing total over its limit."""
+
+
 @dataclass
 class Transaction:
     day: date
@@ -39,6 +44,7 @@ class Account:
     currency: str = "INR"
     balance: Decimal = Decimal("0.00")
     history: list[Transaction] = field(default_factory=list)
+    daily_limit: Decimal = field(default=DEFAULT_DAILY_LIMIT)
 
     def post(self, day: date, amount: Decimal, memo: str, reference: str | None = None) -> None:
         amount = Decimal(amount).quantize(CENT)
@@ -52,11 +58,12 @@ class Ledger:
         self.accounts: dict[str, Account] = {}
         self._seen_references: dict[str, tuple[str, str, Decimal]] = {}
 
-    def open(self, number: str, owner: str, currency: str = "INR") -> Account:
+    def open(self, number: str, owner: str, currency: str = "INR",
+             daily_limit: Decimal | None = None) -> Account:
         number, owner, currency = (" ".join(str(s).split()) for s in (number, owner, currency))
         if number in self.accounts:
             raise DuplicateAccount(number)
-        acct = Account(number, owner, currency)
+        acct = Account(number, owner, currency, daily_limit=daily_limit or DEFAULT_DAILY_LIMIT)
         self.accounts[number] = acct
         return acct
 
@@ -89,6 +96,11 @@ class Ledger:
         a, b = self.get(src), self.get(dst)
         if a.currency != b.currency:
             raise ValueError("cross-currency transfers are not supported")
+        outgoing_today = sum((-t.amount for t in a.history if t.day == day and t.amount < 0), Decimal("0"))
+        if outgoing_today + amount > a.daily_limit:
+            raise DailyLimitExceeded(
+                f"{src} has sent {outgoing_today} today; {amount} would exceed its daily limit {a.daily_limit}"
+            )
         if a.balance < amount:
             raise InsufficientFunds(f"{src} has {a.balance}, needs {amount}")
         a.post(day, -amount, f"{memo} to {dst}", reference)

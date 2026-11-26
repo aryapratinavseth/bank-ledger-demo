@@ -1,9 +1,9 @@
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
 
-from ledger import InsufficientFunds, Ledger, UnknownAccount
+from ledger import DailyLimitExceeded, InsufficientFunds, Ledger, UnknownAccount
 
 D = date(2026, 11, 2)
 
@@ -59,3 +59,56 @@ def test_memo_line_breaks_are_flattened():
     lg = make()
     lg.transfer("A-1", "B-2", Decimal("1"), D, memo="rent\nClosing balance: 999999")
     assert all("\n" not in t.memo for t in lg.get("A-1").history)
+
+
+def big_ledger(limit=None):
+    lg = Ledger()
+    lg.open("A-1", "Asha", daily_limit=limit)
+    lg.open("B-2", "Bilal")
+    lg.deposit("A-1", Decimal("500000.00"), D)
+    return lg
+
+
+def test_transfer_under_daily_limit():
+    lg = big_ledger()
+    assert lg.transfer("A-1", "B-2", Decimal("99999.99"), D)
+
+
+def test_transfer_exactly_at_daily_limit():
+    lg = big_ledger()
+    assert lg.transfer("A-1", "B-2", Decimal("100000.00"), D)
+
+
+def test_transfer_over_daily_limit():
+    lg = big_ledger()
+    assert lg.transfer("A-1", "B-2", Decimal("50000.00"), D)
+    with pytest.raises(DailyLimitExceeded):
+        lg.transfer("A-1", "B-2", Decimal("50000.01"), D)
+
+
+def test_daily_limit_resets_on_new_day():
+    lg = big_ledger()
+    assert lg.transfer("A-1", "B-2", Decimal("100000.00"), D)
+    assert lg.transfer("A-1", "B-2", Decimal("100000.00"), D + timedelta(days=1))
+
+
+def test_retried_transfer_does_not_count_twice():
+    lg = big_ledger()
+    assert lg.transfer("A-1", "B-2", Decimal("60000.00"), D, reference="t1")
+    assert not lg.transfer("A-1", "B-2", Decimal("60000.00"), D, reference="t1")
+    # 60000 + 40000 == limit exactly; a double-counted retry would block this
+    assert lg.transfer("A-1", "B-2", Decimal("40000.00"), D, reference="t2")
+
+
+def test_daily_limit_configurable_at_open():
+    lg = big_ledger(limit=Decimal("1000.00"))
+    assert lg.transfer("A-1", "B-2", Decimal("1000.00"), D)
+    with pytest.raises(DailyLimitExceeded):
+        lg.transfer("A-1", "B-2", Decimal("1.00"), D)
+
+
+def test_daily_limit_changeable_later():
+    lg = big_ledger()
+    lg.get("A-1").daily_limit = Decimal("1000.00")
+    with pytest.raises(DailyLimitExceeded):
+        lg.transfer("A-1", "B-2", Decimal("2000.00"), D)
